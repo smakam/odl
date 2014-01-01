@@ -1,6 +1,8 @@
 import httplib2
 import json
 import sys
+import logging
+from odllib import *
 
 # This program is a prototype for a switch that can Mux/Demux packets based on incoming
 # vlan of the packet. The user can input vlan corresponding to individual host and the switch
@@ -9,74 +11,58 @@ import sys
 # wants to test multiple Devices using a single test port.
 # Tested using Opendaylight and Mininet, traffic generation using Packeth
 
-def post_dict(h, url, d):
-  resp, content = h.request(
-      uri = url,
-      method = 'PUT',
-      headers={'Content-Type' : 'application/json'},
-      body=json.dumps(d)
-    )
-  
-  return resp, content
+# START OF MAIN PROGRAM
+# Setup logging
+LEVELS = {'debug': logging.DEBUG,
+          'info': logging.INFO,
+          'warning': logging.WARNING,
+          'error': logging.ERROR,
+          'critical': logging.CRITICAL}
 
-def build_flow(flowname, nodeid, nodeconnectorid, vlan):
-    newflow = {u'actions': [u'OUTPUT='+nodeconnectorid],
-        u'etherType': u'0x8100',
-        u'installInHw': u'true',
-        u'name': flowname,
-        u'vlanId':vlan,
-        u'node': {u'id': nodeid, u'type': u'OF'},
-        u'priority': u'500'}
-    return newflow
-  
+if len(sys.argv) > 1:
+    level_name = sys.argv[1]
+    level = LEVELS.get(level_name, logging.NOTSET)
+    logging.basicConfig(level=level)
     
 h = httplib2.Http(".cache")
 h.add_credentials('admin', 'admin')
 
 # Get list of hosts
-resp, content = h.request('http://localhost:8080/controller/nb/v2/hosttracker/default/hosts/active', "GET")
-all_hosts = json.loads(content)
-all_hosts = all_hosts['hostConfig']
+all_hosts = get_all_hosts()
 
-for hosts in all_hosts:
-    nodeid = hosts['nodeId']
+# Get all edges
+all_edges = get_all_edges()
+for fs in all_edges:
+    print fs['edge']['tailNodeConnector']['node']['id'],':',fs['edge']['tailNodeConnector']['id'], 'to', fs['edge']['headNodeConnector']['node']['id'],':',fs['edge']['headNodeConnector']['id']
+    
+in_node_conn = raw_input('Enter source port:')        
 hostid = 0
 for hosts in all_hosts:
     # get Node associated with this host
-    nodeid = hosts['nodeId']
+    nodeid1 = hosts['nodeId']
     nodeconnector = hosts['nodeConnectorId']
     
     # Get user input for vlan associated with the host
-    print 'host address is', hosts['networkAddress'], 'connected to node', nodeid
-    vlan = raw_input('Enter vlan for the above host:')
-    print 'vlan: ', vlan
+    print 'host address is', hosts['networkAddress'], 'connected to node', nodeid1
+    vlanid = raw_input('Enter vlan for the above host:')
+    print 'vlan: ', vlanid
 
-    # Build flow    
-    flowname = 'flow' + str(hostid);
-    req_str = 'http://localhost:8080/controller/nb/v2/flowprogrammer/default/node/OF/' + nodeid + '/staticFlow/' + flowname
-  
-    newFlow = build_flow(flowname, nodeid, nodeconnector, vlan)
-    print 'newFlow', newFlow
+    # Build flow for demux
+    fname = 'flow' + str(hostid)
+      
+    newFlow = build_flow(nodeid=nodeid1, flowname=fname, outnodeconn=nodeconnector, vlan=vlanid)
+    logging.debug('newFlow', newFlow)
 
     # post the flow to the controller
-    resp, content = post_dict(h, req_str, newFlow)
-    print 'content', content
+    post_flow(nodeid1, newFlow, fname)
+    
+    # Build flow for mux
+    fname = 'flowx' + str(hostid)
+    newFlow = build_flow(nodeid=nodeid1, flowname=fname, innodeconn=nodeconnector, vlan=vlanid, 
+        outnodeconn=in_node_conn)
+    logging.debug('newFlow', newFlow)
+    
+    # post the flow to the controller
+    post_flow(nodeid1, newFlow, fname)
+    
     hostid+=1
-
-#Add host
-##req_str = 'http://localhost:8080/controller/nb/v2/hosttracker/default/address/10.0.0.3'
-##flowtest = {
-## "dataLayerAddress":"00:00:00:01:01:01",
-## "nodeType":"OF",
-## "nodeId":"00:00:00:00:00:00:00:03",
-## "nodeConnectorType":"OF",
-## "nodeConnectorId":"1",
-## "vlan":"10",
-## "staticHost":"true",
-## "networkAddress":"10.0.0.3"
-##}
-##print 'flowtest', flowtest
-##resp, content = post_dict(h, req_str, flowtest)
-##print 'resp ', resp
-##print 'content', content
-

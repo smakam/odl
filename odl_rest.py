@@ -70,7 +70,7 @@ def post_flow(nodeid, new_flow, flowname):
 
 # Builds and returns flow
 def build_flow(nodeid, flowname, ethertype='', destip='', ipcos='', ipprot='', 
-            installflag='', outnodeconn='', outdstmac='', vlan=''):
+            installflag='', outnodeconn='', outdstmac='', vlan='', innodeconn=''):
     newflow = {}
     
     newflow['name'] = flowname
@@ -89,6 +89,8 @@ def build_flow(nodeid, flowname, ethertype='', destip='', ipcos='', ipprot='',
         newflow['protocol'] = ipprot
     if (vlan != ''):
         newflow['vlanId'] = vlan
+    if (innodeconn != ''):
+        newflow['ingressPort'] = innodeconn
     newflow['priority']=500
     node = {}
     node['id'] = nodeid

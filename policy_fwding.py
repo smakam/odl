@@ -6,6 +6,7 @@ import datetime
 import time
 import copy
 import logging
+from odllib import *
 
 # This program implements policy based path selection.
 # Currently, following options are provided
@@ -24,84 +25,22 @@ ethTypeIp = 0x800
 flowCnt = 0
 ipTypeTcp = 0x6
 ipTypeUdp = 0x11
-flowCnt = 0
-
-# Post request
-def post_dict(h, url, d):
-  resp, content = h.request(
-      uri = url,
-      method = 'PUT',
-      headers={'Content-Type' : 'application/json'},
-      body=json.dumps(d)
-    )
-  return resp, content
-
-# Wrapper function for getall
-def get_all_wrapper(typestring, attribute):
-    url = baseUrl + typestring
-    logging.debug('url %s', url)
-    resp, content = h.request(url, "GET")
-    allContent = json.loads(content)
-    allrows = allContent[attribute]
-    return allrows
-    
-# Builds and returns flow
-def build_flow(nodeid, ethertype='', destip='', ipcos='', ipprot='', 
-            outnodeconn='', outdstmac=''):
-    newflow = {}  
-    global flowCnt
-    
-    flowname = 'flow' + str(flowCnt)
-    newflow['name'] = flowname
-    newflow['installInHw'] = 'true'
-    newflow['node'] = {u'id': nodeid, u'type': u'OF'}
-    if (destip != ''):
-        newflow['nwDst'] = destip
-    if (ethertype != ''):
-        newflow['etherType'] = ethertype
-    if (ipcos != ''):
-        newflow['tosBits'] = ipcos
-    if (ipprot != ''):
-        newflow['protocol'] = ipprot
-    newflow['priority']=500
-    node = {}
-    node['id'] = nodeid
-    node['type'] = 'OF'
-    newflow['node'] = node
-    
-    actions1 = 'OUTPUT='+str(outnodeconn)
-    if (outdstmac != ''):
-        actions2 = 'SET_DL_DST='+str(outdstmac)
-    else:
-        actions2 = ''
-    logging.debug('actions1 %s actions2 %s',actions1, actions2)
-    newflow['actions'] = [actions1 + '','' + actions2]
-    
-    flowCnt += 1
-    return newflow, flowname
 
 # Find all hosts connected to the node and add flow entry to reach host from node
 def add_flows_host(node_id):
+    global flowCnt
     for host_prop in all_hosts:
         host_node_id = host_prop['nodeId']
         if (host_node_id == node_id):
             node_conn = host_prop['nodeConnectorId']
             dest_ip = host_prop['networkAddress']
             dest_mac = host_prop['dataLayerAddress']
-            newflow, flowname = build_flow(nodeid=node_id, outnodeconn=node_conn, 
+            fname = 'flow' + str(flowCnt)
+            newflow = build_flow(nodeid=node_id, flowname=fname, outnodeconn=node_conn, 
                 ethertype=ethTypeIp, destip=dest_ip, outdstmac=dest_mac)
-            post_flow(node_id, newflow, flowname)
+            flowCnt += 1
+            post_flow(node_id, newflow, fname)
     
-# Returns all hosts connected to node
-def get_allhost_node(node_id):
-    host_list=[]
-    for host_prop in all_hosts:
-        host_node_id = host_prop['nodeId']
-        logging.debug('host_node_id %s node_id %s', host_node_id, node_id)
-        if (host_node_id == node_id):
-            host_list.append(host_prop)
-    return host_list
-
 # Returns node connector of source nodeid which has the connection to dest node_id
 def find_node_connector(src_node_id, dest_node_id):
     for edge in all_edges:
@@ -109,29 +48,11 @@ def find_node_connector(src_node_id, dest_node_id):
             (dest_node_id == edge['edge']['tailNodeConnector']['node']['id'])):
             return (edge['edge']['headNodeConnector']['id'])
 
-# Post flow to controller
-def post_flow(nodeid, new_flow, flowname):
-    req_str = baseUrl + 'flowprogrammer/default/node/OF/' + nodeid + '/staticFlow/' + flowname
-    logging.debug('req_str %s', req_str)
-    resp, content = post_dict(h, req_str, new_flow)
-    logging.debug('resp %s', resp)
-    logging.debug('content %s', content)
-
-# Deletes the specific flow from the node requested
-def delete_flow(nodeid, flowname):
-    global flowCnt
-    req_str = baseUrl + 'flowprogrammer/default/node/OF/' + nodeid + '/staticFlow/' + flowname
-    logging.debug('req_str %s', req_str)
-    resp, content = h.request(
-      uri = req_str,
-      method = 'DELETE',
-    )
-    # Delete flowCnt
-    flowCnt -= 1
-    return resp, content
-
 # Sets up flow as specified by the path
 def setup_path(path):
+    # Use global flowCnt to create flowname
+    global flowCnt
+        
     # Make copy of path
     path = copy.deepcopy(path)
     
@@ -154,48 +75,35 @@ def setup_path(path):
                 nodeid2 = path[i+1]
                 logging.debug('nodeid1 %s nodeid2 %s', nodeid1, nodeid2)
                 node_conn = find_node_connector(nodeid1, nodeid2)
-                host_list = get_allhost_node(new_dest_node_id)
+                host_list = get_all_hosts_node(new_dest_node_id)
                 
                 for host in host_list:
                     ip_addr = host['networkAddress']
-                    new_flow, flowname = build_flow(nodeid=nodeid1, outnodeconn=node_conn, 
-                                ethertype=ethTypeIp, destip=ip_addr)
-                    post_flow(nodeid1, new_flow, flowname)
+                    fname = 'flow' + str(flowCnt)
+                    new_flow = build_flow(nodeid=nodeid1, outnodeconn=node_conn, 
+                                flowname=fname, ethertype=ethTypeIp, destip=ip_addr)
+                    flowCnt += 1
+                    post_flow(nodeid1, new_flow, fname)
                     # Build flow list
-                    logging.debug('nodeid1 %s flowname %s', nodeid1, flowname)
+                    logging.debug('nodeid1 %s flowname %s', nodeid1, fname)
                     path_dict ={}
                     path_dict['nodeid'] = nodeid1
-                    path_dict['flowname'] = flowname
+                    path_dict['flowname'] = fname
                     path_flow_list.append(path_dict)
         
     return path_flow_list
 
 # Deletes flow corresponding to the flow list passed
 def delete_path_flow(path_flow_list):
+    global flowCnt
+    
     for flow in path_flow_list:
         nodeid = flow['nodeid']
         flowname = flow['flowname']
-        delete_flow(nodeid, flowname)
-
-# Get node stats
-def get_node_stats(nodeid):
-    req_str = baseUrl + 'statistics/default/port/node/OF/' + nodeid
-    logging.debug('req_str %s', req_str)
-    resp, content = h.request(req_str, "GET")
-    node_stats = json.loads(content)
-    
-    return node_stats
-
-# Get node, port stats
-def get_port_stats(nodeid, portid):
-    node_stats = get_node_stats(nodeid)
-    stats = {}
-    for stats in node_stats['portStatistic']:
-        if (stats['nodeConnector']['id'] == portid):
-            logging.info('nodeid %s portid %s txbyte %d rxbyte %d', nodeid, portid, 
-            stats['transmitBytes'], stats['receiveBytes'])
-            return stats
-        
+        #Decrement flowcount
+        flowCnt -= 1
+        delete_spec_flow_node(nodeid, flowname)
+     
 # Calculate bandwidth
 def calc_bw(prev_stats, curr_stats, time_int):
     prev_tx_byte_cnt = prev_stats['transmitBytes']
@@ -229,12 +137,12 @@ h = httplib2.Http(".cache")
 h.add_credentials('admin', 'admin')  
     
 # Get all hosts, nodes, flows
-all_hosts = get_all_wrapper('hosttracker/default/hosts/active/', 'hostConfig')
-all_nodes = get_all_wrapper('switchmanager/default/nodes', 'nodeProperties')
-all_flows = get_all_wrapper('flowprogrammer/default', 'flowConfig')
+all_hosts = get_all_hosts()
+all_nodes = get_all_nodes()
+all_flows = get_all_flows()
 
 # Get all the edges/links
-all_edges = get_all_wrapper('topology/default', 'edgeProperties')
+all_edges = get_all_edges()
 
 # Put nodes and edges into a graph
 graph = nx.Graph()
@@ -305,31 +213,29 @@ if (policy_type == '1'):
                     nodeid2 = path[i+1]
                     logging.debug('nodeid1 %s nodeid2 %s', nodeid1, nodeid2)
                     node_conn = find_node_connector(nodeid1, nodeid2)
-                    host_list = get_allhost_node(new_dest_node_id)
+                    host_list = get_all_hosts_node(new_dest_node_id)
                     if (tr_type == '1'):
                         if ((path_cnt % 2) == 0):
-                            logging.debug('use cos0 for path nodeid1 %s nodeid2 %s', 
-                            nodeid1, nodeid2)
+                            print 'use cos0 for path', nodeid1, 'to', nodeid2
                             cos_value = 0
                         else:
-                            logging.debug('use cos1 for path nodeid1 %s nodeid2 %s', 
-                            nodeid1, nodeid2)
+                            print 'use cos1 for path', nodeid1, 'to', nodeid2
                             cos_value = 1
                     else:
                         if ((path_cnt % 2) == 0):
-                            logging.debug('use TCP for path nodeid1 %s nodeid2 %s', 
-                            nodeid1, nodeid2)
+                            print 'use TCP for path', nodeid1, 'to', nodeid2
                             ip_prot = ipTypeTcp
                         else:
-                            logging.debug('use UDP for path nodeid1 %s nodeid2 %s', 
-                            nodeid1, nodeid2)
+                            print 'use UDP for path', nodeid1, 'to', nodeid2
                             ip_prot = ipTypeUdp
                     for host in host_list:
                         ip_addr = host['networkAddress']
-                        new_flow, flowname = build_flow(nodeid=nodeid1, outnodeconn=node_conn, 
+                        fname = 'flow' + str(flowCnt)
+                        new_flow = build_flow(nodeid=nodeid1, flowname=fname, outnodeconn=node_conn, 
                                     ethertype=ethTypeIp, destip=ip_addr, 
                                     ipcos=cos_value, ipprot=ip_prot)
-                        post_flow(nodeid1, new_flow, flowname)
+                        flowCnt += 1
+                        post_flow(nodeid1, new_flow, fname)
         path_cnt += 1
 elif (policy_type == '2'):
     logging.debug('all_path_cnt %d', all_path_cnt)
@@ -366,9 +272,15 @@ elif (policy_type == '2'):
         
 elif (policy_type == '3'):
     print 'Bandwidth based'
+    # Initialize dictionary
     port_stats = {}
-    port_stats['nodeid1'] = {}
-    port_stats['nodeid1']['nodeconn'] = {}
+    all_nodes = get_all_nodes()
+    for node in all_nodes:
+        port_stats[node['node']['id']] = {}
+    all_edges = get_all_edges()
+    for edge in all_edges:
+        port_stats[edge['edge']['tailNodeConnector']['node']['id']][edge['edge']['tailNodeConnector']['id']] = {}
+        
     # bytes per second
     bw_threshold = 1000
     
@@ -394,11 +306,12 @@ elif (policy_type == '3'):
                 nodeid2 = path[i+1]
                 logging.debug('nodeid1 %s nodeid2 %s', nodeid1, nodeid2)
                 node_conn = find_node_connector(nodeid1, nodeid2)
-                port_stats['nodeid1']['nodeconn']['currstats'] = get_port_stats(nodeid1, node_conn)
+                
+                port_stats[nodeid1][node_conn]['currstats'] = get_node_port_stats(nodeid1, node_conn)
                 # Ignore first reading
-                if (loop_cnt > 1):
-                    bandwidth = calc_bw(port_stats['nodeid1']['nodeconn']['prevstats'], 
-                    port_stats['nodeid1']['nodeconn']['currstats'], 5)
+                if (loop_cnt >= 1):
+                    bandwidth = calc_bw(port_stats[nodeid1][node_conn]['prevstats'], 
+                    port_stats[nodeid1][node_conn]['currstats'], 5)
                     logging.debug('bw_tx %d bw_rx %d', bandwidth['tx'], bandwidth['rx'])
                     if ((bandwidth['tx'] > bw_threshold) or (bandwidth['rx'] > bw_threshold)):
                         print 'Switching to backup path', all_path_list[1]
@@ -406,7 +319,7 @@ elif (policy_type == '3'):
                         setup_path(all_path_list[1])
                         exit()
                 # Update prevstats
-                port_stats['nodeid1']['nodeconn']['prevstats'] = port_stats['nodeid1']['nodeconn']['currstats']
+                port_stats[nodeid1][node_conn]['prevstats'] = port_stats[nodeid1][node_conn]['currstats']
         loop_cnt += 1
         time.sleep(5)
 else:
