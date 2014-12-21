@@ -20,7 +20,10 @@ def get_wrapper(typestring):
 # Parse node inventory
 def parse_node():
     node_content = get_wrapper('/operational/opendaylight-inventory:nodes/')
-    node_list = node_content['nodes']['node']
+    if 'node' in node_content['nodes']:
+	node_list = node_content['nodes']['node']
+    else:
+	node_list = {}
     
     for node in node_list:
         switch = {}
@@ -75,7 +78,10 @@ def parse_node():
 # Parse topology
 def parse_topology():
     top_content = get_wrapper('/operational/network-topology:network-topology/')
-    edge_list = (top_content['network-topology']['topology'])[0]['link']
+    if 'link' in (top_content['network-topology']['topology'])[0]:
+	edge_list = (top_content['network-topology']['topology'])[0]['link']
+    else:
+	edge_list = {}
 
     for edge in edge_list:
         edge_info = {}
